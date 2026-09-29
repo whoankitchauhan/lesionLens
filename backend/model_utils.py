@@ -301,3 +301,243 @@ def predict(image: Image.Image):
 
         "all_probabilities": all_probabilities
     }
+    
+    
+# ============================================================
+# Grad-CAM Explainability
+# ============================================================
+# Grad-CAM (Gradient-weighted Class Activation Mapping)
+# helps us visualize which parts of the image influenced
+# the model's prediction.
+#
+# Red/yellow regions → stronger influence
+# Blue regions       → weaker influence
+# ============================================================
+
+import torch.nn.functional as F
+import matplotlib.cm as cm
+
+
+# ============================================================
+# Grad-CAM Class
+# ============================================================
+
+class GradCAM:
+
+    def __init__(self, model, target_layer):
+        """
+        Connects Grad-CAM to a specific layer of the model.
+        """
+
+        self.model = model
+        self.target_layer = target_layer
+
+        # These will store information during forward/backward pass
+        self.gradients = None
+        self.activations = None
+
+        # Save activations during the forward pass
+        target_layer.register_forward_hook(
+            self._save_activation
+        )
+
+        # Save gradients during the backward pass
+        target_layer.register_full_backward_hook(
+            self._save_gradient
+        )
+
+
+    # --------------------------------------------------------
+    # Save Forward Activations
+    # --------------------------------------------------------
+
+    def _save_activation(self, module, input, output):
+
+        self.activations = output.detach()
+
+
+    # --------------------------------------------------------
+    # Save Backward Gradients
+    # --------------------------------------------------------
+
+    def _save_gradient(self, module, grad_input, grad_output):
+
+        self.gradients = grad_output[0].detach()
+
+
+    # --------------------------------------------------------
+    # Generate Grad-CAM
+    # --------------------------------------------------------
+
+    def generate(self, input_tensor, class_idx=None):
+        """
+        Generates a Grad-CAM heatmap for an input image.
+        """
+
+        # Make sure the model is in evaluation mode
+        self.model.eval()
+
+        # Forward pass
+        output = self.model(input_tensor)
+
+        # If no class is provided, explain the predicted class
+        if class_idx is None:
+            class_idx = output.argmax(
+                dim=1
+            ).item()
+
+        # Clear previous gradients
+        self.model.zero_grad()
+
+        # Backpropagate the selected class score
+        output[0, class_idx].backward()
+
+        # Calculate importance of each feature channel
+        weights = self.gradients.mean(
+            dim=(2, 3),
+            keepdim=True
+        )
+
+        # Combine activations using the calculated weights
+        cam = (
+            weights * self.activations
+        ).sum(
+            dim=1,
+            keepdim=True
+        )
+
+        # Remove negative values
+        cam = F.relu(cam)
+
+        # Resize heatmap to our model input size
+        cam = F.interpolate(
+            cam,
+            size=(224, 224),
+            mode="bilinear",
+            align_corners=False
+        )
+
+        # Convert tensor to NumPy array
+        cam = cam.squeeze().cpu().numpy()
+
+        # Normalize values between 0 and 1
+        cam = (
+            cam - cam.min()
+        ) / (
+            cam.max() - cam.min() + 1e-8
+        )
+
+        return cam, class_idx
+
+
+# ============================================================
+# Initialize Grad-CAM
+# ============================================================
+
+# Use the final feature layer of EfficientNet-B0.
+# This is the same target layer used in the Kaggle notebook.
+
+target_layer = model.features[-1]
+
+gradcam = GradCAM(
+    model,
+    target_layer
+)
+
+
+# ============================================================
+# Denormalize Image
+# ============================================================
+
+def denormalize(tensor):
+    """
+    Converts a normalized image tensor back
+    into a normal image range of 0-1.
+    """
+
+    mean = np.array([
+        0.485,
+        0.456,
+        0.406
+    ])
+
+    std = np.array([
+        0.229,
+        0.224,
+        0.225
+    ])
+
+    # Convert from CHW → HWC
+    image = tensor.cpu().numpy().transpose(
+        1, 2, 0
+    )
+
+    # Undo ImageNet normalization
+    image = std * image + mean
+
+    return np.clip(
+        image,
+        0,
+        1
+    )
+
+
+# ============================================================
+# Generate Grad-CAM Overlay
+# ============================================================
+
+def generate_gradcam_overlay(image: Image.Image):
+    """
+    Takes a PIL image and returns:
+    1. Grad-CAM overlay as a PIL image
+    2. Predicted class code
+    """
+
+    # Make sure image is RGB
+    image = image.convert("RGB")
+
+    # Apply the same hair removal used during training
+    cleaned_image = Image.fromarray(
+        remove_hair(image)
+    )
+
+    # Apply the same preprocessing used for prediction
+    tensor = eval_transform(
+        cleaned_image
+    ).unsqueeze(0).to(device)
+
+    # Generate Grad-CAM
+    cam, pred_idx = gradcam.generate(
+        tensor
+    )
+
+    # Convert normalized tensor back to normal image
+    original_image = denormalize(
+        tensor.squeeze(0)
+    )
+
+    # Convert heatmap values into colors
+    heatmap = cm.jet(cam)[:, :, :3]
+
+    # Blend original image and heatmap
+    overlay = (
+        0.5 * original_image
+        + 0.5 * heatmap
+    )
+
+    # Keep values between 0 and 1
+    overlay = np.clip(
+        overlay,
+        0,
+        1
+    )
+
+    # Convert NumPy array → PIL image
+    overlay_image = Image.fromarray(
+        (overlay * 255).astype(np.uint8)
+    )
+
+    return (
+        overlay_image,
+        idx_to_class[pred_idx]
+    )
