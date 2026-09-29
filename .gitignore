@@ -1,0 +1,62 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+build/
+dist/
+
+# ===== Virtual Environment =====
+venv/
+env/
+ENV/
+.venv/
+
+# ===== Environment Variables / Secrets =====
+.env
+.env.local
+*.pem
+kaggle.json
+
+# ===== Trained Model Weights (large files — see note below) =====
+# Uncomment the next two lines if you don't want to push large model files to GitHub.
+# Use Git LFS instead if you want to version them properly.
+# model/*.pth
+# model/*.h5
+
+# ===== Jupyter / Kaggle Notebooks =====
+.ipynb_checkpoints/
+*.ipynb
+
+# ===== Streamlit =====
+.streamlit/secrets.toml
+
+# ===== IDE / Editor =====
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# ===== OS Files =====
+Thumbs.db
+desktop.ini
+
+# ===== Logs =====
+*.log
+logs/
+
+# ===== Dataset (do NOT push raw HAM10000 images to GitHub) =====
+data/
+dataset/
+*.zip
+HAM10000_images_part_1/
+HAM10000_images_part_2/
+
+# ===== Misc =====
+*.tmp
+*.bak
+.cache/
